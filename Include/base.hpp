@@ -17,7 +17,7 @@ public:
 	base_vertex(const Eigen::Vector3f& coord, const Eigen::Vector3f& normal, 
 				const Eigen::Vector2f& tex_coord) :
 		_coord(coord), _normal(normal), _tex_coord(tex_coord) {}
-	base_vertex(float coordX, float coordY, float coordZ, float normalX, float normalY, float normalZ, 
+	base_vertex(float coordX, float coordY, float coordZ, float normalX = 0.0f, float normalY = 0.0f, float normalZ = 0.0f, 
 				float texCoordU = 0.0f, float texCoordV = 0.0f) :
 		_coord(Eigen::Vector3f(coordX, coordY, coordZ)), _normal(Eigen::Vector3f(normalX, normalY, normalZ)), 
 		_tex_coord(Eigen::Vector2f(texCoordU, texCoordV)) {}
@@ -136,8 +136,9 @@ class spring {
 public:
 	const unsigned int p1;
 	const unsigned int p2;
-	spring(unsigned int P1, unsigned int P2, float Ks, float Kd, float l0) :
-		p1(P1), p2(P2), _Ks(Ks), _Kd(Kd), _l0(l0) {}
+	const float l0;
+	spring(unsigned int P1, unsigned int P2, float Ks, float Kd, float L0) :
+		p1(P1), p2(P2), _Ks(Ks), _Kd(Kd), l0(L0) {}
 
 	template <class InputIter>
 	Eigen::Vector3f forces2p1(InputIter particles) const {
@@ -147,8 +148,8 @@ public:
 		forceDirection.normalize();
 			
 		float distance = (vertex1.coord() - vertex2.coord()).norm();
-		distance = std::max(0.9f * _l0, distance);
-		Eigen::Vector3f springForce = _Ks * (distance - _l0) * forceDirection;
+		distance = std::max(0.9f * l0, distance);
+		Eigen::Vector3f springForce = _Ks * (distance - l0) * forceDirection;
 		//Eigen::Vector3f dampingForce = _Kd * (vertex2.velocity() - vertex1.velocity()).dot(forceDirection) * forceDirection;
 		Eigen::Vector3f dampingForce = _Kd * (vertex2.velocity() - vertex1.velocity());
 
@@ -161,7 +162,7 @@ public:
 		const deformable_vertex& vertex2 = *(particles + p2);
 
 		float distance = (vertex1.coord() - vertex2.coord()).norm();
-		if (distance >= 0.9 * _l0)
+		if (distance >= 0.9 * l0)
 		{
 			Eigen::Matrix3f I = Eigen::Matrix3f::Identity();
 			Eigen::Vector3f xij = vertex2.coord() - vertex1.coord();
@@ -170,7 +171,28 @@ public:
 			float l = xij.norm();
 			Eigen::Matrix3f dxijUnit_dxi = -1 / l * (I - 1 / (l * l) * xij * xij.transpose());
 
-			return _Ks * (-I - _l0 * dxijUnit_dxi);// _Kd* (vij.dot(xijUnit) * I - xijUnit * vij.transpose())* dxijUnit_dxi;
+			return _Ks * (-I - l0 * dxijUnit_dxi);// _Kd* (vij.dot(xijUnit) * I - xijUnit * vij.transpose())* dxijUnit_dxi;
+		}
+		else
+			return Eigen::Matrix3f::Zero();
+	}
+
+	template <class InputIter>
+	Eigen::Matrix3f df1dx1_nonlinear_part(InputIter particles) const {
+		const deformable_vertex& vertex1 = *(particles + p1);
+		const deformable_vertex& vertex2 = *(particles + p2);
+
+		float distance = (vertex1.coord() - vertex2.coord()).norm();
+		if (distance >= 0.9 * l0)
+		{
+			Eigen::Matrix3f I = Eigen::Matrix3f::Identity();
+			Eigen::Vector3f xij = vertex2.coord() - vertex1.coord();
+			Eigen::Vector3f xijUnit = xij.normalized();
+			Eigen::Vector3f vij = vertex2.velocity() - vertex1.velocity();
+			float l = xij.norm();
+			Eigen::Matrix3f dxijUnit_dxi = -1 / l * (I - 1 / (l * l) * xij * xij.transpose());
+
+			return _Ks * (l0 * dxijUnit_dxi);// _Kd* (vij.dot(xijUnit) * I - xijUnit * vij.transpose())* dxijUnit_dxi;
 		}
 		else
 			return Eigen::Matrix3f::Zero();
@@ -190,7 +212,6 @@ public:
 private:
 	float _Ks;
 	float _Kd;
-	float _l0;
 };
 }
 

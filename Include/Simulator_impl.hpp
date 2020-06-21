@@ -1,7 +1,7 @@
 #include "Simulator.hpp"
 
 using namespace Eigen;
-const float KPenalty = 1000;
+const float KPenalty = 2000;
 
 template<typename ClothType, typename... Val>
 Simulator::Simulator::cloth_handle&
@@ -304,16 +304,20 @@ void Simulator::Simulator::collision_process()
 	float cellSize = 0.0f;
 	unsigned int nEdges = 0;
 
-	for (cloth_handle& pCloth : _cloths) {
-		cellSize += pCloth->avg_edge_length() * pCloth->size_vertices();
-		nEdges += pCloth->size_edges();
-	}
 	for (rigid_handle& pRigid :_rigids) {
-		cellSize += pRigid->avg_edge_length() * pRigid->size_vertices();
+		cellSize += pRigid->avg_edge_length() * pRigid->size_edges();
 		nEdges += pRigid->size_edges();
 	}
+#ifdef CLOTHSIMULATION_VERBOSE
+	std::cout << "\tNumber of cloth edges: " << nEdges << std::endl;
+#endif
 	cellSize /= nEdges;
 
+#ifdef CLOTHSIMULATION_VERBOSE
+	double deltaTime, currTime = glfwGetTime();
+	unsigned totalRigidsInsertingCells = 0;
+#endif
+	
 
 	// Build grids
 	for (unsigned int i = 0; i < _cloths.size(); ++i) {
@@ -325,12 +329,27 @@ void Simulator::Simulator::collision_process()
 			_hash_table->insert(cell, HashTableEntry::CLOTH, i, element);
 		}
 	}
+
+#ifdef CLOTHSIMULATION_VERBOSE
+	deltaTime = glfwGetTime() - currTime;
+	std::cout << "Insert cloths into hashtable: " << deltaTime << " seconds" << std::endl;
+	currTime = glfwGetTime();
+
+	double totalAABBTime = 0;
+	double totalInsertingTime = 0;
+	double currSubTime = 0;
+#endif
+
+	
 	for (unsigned int i = 0; i < _rigids.size(); ++i) {
 		rigid_handle& pRigid = _rigids[i];
 		RigidModel::point_iterator pointsBegin = pRigid->points_begin();
 		unsigned element = 0;
 
 		for (auto it = pRigid->tetrahedrons_begin(); it != pRigid->tetrahedrons_end(); ++it, ++element) {
+#ifdef CLOTHSIMULATION_VERBOSE
+			currSubTime = glfwGetTime();
+#endif
 			auto& indices = (*it);
 			Matrix<float, 3, 4> points;
 			RigidModel::Point& p1 = *(pointsBegin + indices[0]);
@@ -345,10 +364,31 @@ void Simulator::Simulator::collision_process()
 			Vector3f maxCoord = points.rowwise().maxCoeff();
 			minCoord = (minCoord / cellSize).array().floor();
 			maxCoord = (maxCoord / cellSize).array().floor();
+
+#ifdef CLOTHSIMULATION_VERBOSE
+			double AABBTime = glfwGetTime() - currSubTime;
+			totalAABBTime += AABBTime;
+			currSubTime = glfwGetTime();
+			totalRigidsInsertingCells += ((maxCoord - minCoord) + Vector3f(1, 1, 1)).prod();
+#endif
 			_hash_table->insert_range(minCoord.x(), maxCoord.x(), minCoord.y(), maxCoord.y(), minCoord.z(), maxCoord.z(),
 				HashTableEntry::RIGID, i, element);
+#ifdef CLOTHSIMULATION_VERBOSE
+			double insertingTime = glfwGetTime() - currSubTime;
+			totalInsertingTime += insertingTime;
+#endif
 		}
 	}
+
+#ifdef CLOTHSIMULATION_VERBOSE
+	deltaTime = glfwGetTime() - currTime;
+	std::cout << "\tInsert rigids into hashtable: " << deltaTime << " seconds" << std::endl;
+	std::cout << "\tCalculate AABB: " << totalAABBTime << " seconds" << std::endl;
+	std::cout << "\tInsering rigids: " << totalInsertingTime << " seconds" << std::endl;
+	std::cout << "\tTotal inserted cells of rigids: " << totalRigidsInsertingCells << std::endl;
+	std::cout << "\tCell size " << cellSize << std::endl;
+	currTime = glfwGetTime();
+#endif
 
 	for (unsigned int i = 0; i < _cloths.size(); ++i) {
 		cloth_handle& pCloth = _cloths[i];
@@ -440,6 +480,12 @@ void Simulator::Simulator::collision_process()
 			}
 		}
 	}
+
+#ifdef CLOTHSIMULATION_VERBOSE
+	deltaTime = glfwGetTime() - currTime;
+	std::cout << "Collision Response: " << deltaTime << " seconds" << std::endl;
+	currTime = glfwGetTime();
+#endif
 }
 
 void Simulator::Simulator::init_hashtable()

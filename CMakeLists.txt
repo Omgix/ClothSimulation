@@ -13,7 +13,7 @@ find_package(OpenGL)
 include_directories("Include")
 link_directories("Libs")
 # find_library ("glfw3")
-add_library (glad "ClothSimulation/glad.c")
+add_library (glad "src/glad.c")
 
 find_package(CGAL REQUIRED)
 

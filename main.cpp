@@ -1,18 +1,25 @@
 //#define CLOTHSIMULATION_VERBOSE
 #include "Simulator.hpp"
 
+#include <iostream>
+
+unsigned frames = 0;
+double totalUpdateTimes = 0.0;
+
 int main()
 {
 	
 	Simulator::Simulator simulator;
 
-	auto& cloth_handle = simulator.add_cloth<Simulator::RectangleDeformalbleModel>(20, 10);
+	auto& cloth_handle = simulator.add_cloth<Simulator::RectangleDeformableModel>(20, 20);
 	cloth_handle->translate(0, 2, -0.2);
 	cloth_handle->set_color(1.0f, 0.0f, 0.0f);
-	auto& rigid_handle = simulator.add_rigid<Simulator::Quad>();
+	//auto& rigid_handle = simulator.add_rigid<Simulator::Quad>();
+	//auto& rigid_handle = simulator.add_rigid<Simulator::RigidModel>("pikaqiu.obj");
+	auto& rigid_handle = simulator.add_rigid<Simulator::Sphere>();
 	rigid_handle->set_color(0.0f, 0.0f, 1.0f);
 	//rigid_handle->translate(0, 1.5, -1);
-	//rigid_handle->scale(0.5, 0.5, 0.5);
+	//rigid_handle->scale(0.1, 0.1, 0.1);
 
 	simulator.init_main_loop();
 
@@ -60,10 +67,18 @@ int main()
 			/*if (i % 10 == 0) {
 				simulator.clear_hashtable();
 			}*/
+			currTime = glfwGetTime();
+
 			simulator.pre_step_physics();
-			cloth_handle->set_translation_degree(19, 0);
+			//cloth_handle->set_translation_degree(19, 0);
 			//cloth_handle->set_translation_degree(199, 0);
+
 			simulator.step_physics(timeStep);
+
+			deltaTime = glfwGetTime() - currTime;
+			totalUpdateTimes += deltaTime;
+			frames++;
+
 			accumulator -= timeStep;
 			i++;
 		}
@@ -71,6 +86,9 @@ int main()
 		needRedisplay = true;
 	}
 	glfwTerminate();
+
+	printf("Total frames: %d, average update time: %.5fs\n", frames, totalUpdateTimes / frames);
+	std::cin.get();
 
 	return 0;
 }

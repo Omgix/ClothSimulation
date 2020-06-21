@@ -14,9 +14,9 @@
 //const float	KsStruct = 0.75f, KdStruct = -0.25f;
 //const float	KsShear = 0.75f, KdShear = -0.25f;
 //const float	KsBend = 0.95f, KdBend = -0.25f;
-const float	KsStruct = 3.5e2f, KdStruct = 1.5e0f;
-const float	KsShear = 3.5e2f, KdShear = 1.5e0f;
-const float	KsBend = 3.5e2f, KdBend = 1.5e0f;
+const float	KsStruct = 5.5e2f, KdStruct = 1.5e0f;
+const float	KsShear = 5.5e2f, KdShear = 1.5e0f;
+const float	KsBend = 1.5e2f, KdBend = 1.5e0f;
 const float Mass = 1.f;
 
 namespace Simulator {
@@ -65,9 +65,9 @@ private:
 
 class DeformableModel: public BaseModel<deformable_vertex, deformable_face> {
 public:
-	explicit DeformableModel(float pMass = Mass, float ksStruct = KsStruct, float kdStruct = KdStruct, 
+	explicit DeformableModel(unsigned nVertices, float pMass = Mass, float ksStruct = KsStruct, float kdStruct = KdStruct, 
 							    float ksShear = KsShear, float kdShear = KdShear, float ksBend = KsBend, float kdBend = KdBend) :
-		_p_mass(pMass),_ks_struct(ksStruct), _kd_struct(kdStruct), _ks_shear(ksShear), _kd_shear(kdShear), 
+		_dfdx_precomputed(nVertices), _dfdv_precomputed(nVertices), _p_mass(pMass),_ks_struct(ksStruct), _kd_struct(kdStruct), _ks_shear(ksShear), _kd_shear(kdShear),
 		_ks_bend(ksBend), _kd_bend(kdBend) {}
 	//void set(std::vector<deformable_vertex>& vertices, std::vector<deformable_face>& faces, std::vector<spring>& springs);
 	//void set(std::vector<deformable_vertex>&& vertices, std::vector<deformable_face>&& faces, std::vector<spring>&& springs);
@@ -90,9 +90,12 @@ protected:
 	const float _kd_shear;
 	const float _ks_bend;
 	const float _kd_bend;
+	SparseMatrix3Xf _dfdx_precomputed;
+	SparseMatrix3Xf _dfdv_precomputed;
 private:
 	void update_force();
 	void update_position(float step);
+	void apply_inverse_dynamic();
 	Eigen::VectorXf force_vector() const;
 	Eigen::VectorXf velocity_vector() const;
 	Eigen::VectorXf delta_v_constrained_vector() const;
@@ -115,6 +118,7 @@ public:
 	typedef std::vector<Point>::iterator point_iterator;
 
 	RigidModel() = default;
+	RigidModel(const char* objFile);
 	template <typename VertexIter, typename FaceIter>
 	RigidModel(VertexIter vertexBegin, VertexIter vertexEnd, FaceIter faceBegin, FaceIter faceEnd);
 	RigidModel(std::vector<base_vertex>&& vertices, std::vector<base_face>&& faces);
@@ -122,6 +126,7 @@ public:
 	void translate(float tx, float ty, float tz);
 	void rotate(float angle, float axisx, float axisy, float axisz);
 	void scale(float scalex, float scaley, float scalez);
+	inline bool is_fixed() { return _fixed;  }
 	inline tetrahedron_iterator tetrahedrons_begin();
 	inline tetrahedron_iterator tetrahedrons_end();
 	inline point_iterator points_begin();
@@ -129,6 +134,7 @@ public:
 protected:
 	std::vector<Point> _points;
 	std::vector<Tetrahedron> _tetrahedrons;
+	bool _fixed = true;
 	
 	void init_tetrahedra();
 };
@@ -139,9 +145,15 @@ public:
 	Quad();
 };
 
-class RectangleDeformalbleModel : public DeformableModel {
+class Sphere : public RigidModel
+{
 public:
-	explicit RectangleDeformalbleModel(unsigned int width, unsigned int height, float pMass = Mass,
+	Sphere();
+};
+
+class RectangleDeformableModel : public DeformableModel {
+public:
+	explicit RectangleDeformableModel(unsigned int width, unsigned int height, float pMass = Mass,
 		float ksStruct = KsStruct, float kdStruct = KdStruct,
 		float ksShear = KsShear, float kdShear = KdShear,
 		float ksBend = KsBend, float kdBend = KdBend);
@@ -152,6 +164,7 @@ private:
 	inline unsigned int index(unsigned int i, unsigned int j) {
 		return i * _width + j;
 	}
+	void add_spring(unsigned v1, unsigned v2, float ks, float kd, float l0);
 };
 }
 

@@ -1,7 +1,11 @@
 #include "model.hpp"
 #include "SpatialHashing.hpp"
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+
 #include <algorithm>
+#include <cmath>
 #include <Eigen/Dense> 
 #include <Eigen/Geometry> 
 #include "glad/glad.h"
@@ -12,8 +16,8 @@ Eigen::Vector3f Gravity(0.0f, -9.81e-1f, 0.0f);
 const float Length = 0.1f;
 const float DiagonalCoeff = sqrt(2);
 
-static float verticesBufferData[8192];
-static unsigned int indicesBufferData[8192];
+static float verticesBufferData[81920];
+static unsigned int indicesBufferData[81920];
 
 using namespace Eigen;
 
@@ -234,6 +238,7 @@ DeformableModel::step_physics(float step)
 {
 	update_force();
 	update_position(step);
+	apply_inverse_dynamic();
 }
 
 void
@@ -267,8 +272,10 @@ DeformableModel::update_position(float step)
 	currTime = glfwGetTime();
 #endif
 	
-	const SparseMatrix3Xf dfdx = jacobian_dfdx();
-	const SparseMatrix3Xf dfdv = jacobian_dfdv();
+	//const SparseMatrix3Xf dfdx = jacobian_dfdx();
+	//const SparseMatrix3Xf dfdv = jacobian_dfdv();
+	const SparseMatrix3Xf& dfdx = _dfdx_precomputed;
+	const SparseMatrix3Xf& dfdv = _dfdv_precomputed;
 
 #ifdef CLOTHSIMULATION_VERBOSE
 	deltaTime = glfwGetTime() - currTime;
@@ -316,6 +323,40 @@ DeformableModel::update_position(float step)
 		_vertices[i]._coord += step * _vertices[i]._velocity;
 	}
 }
+
+void
+DeformableModel::apply_inverse_dynamic()
+{
+	for (unsigned i = 0; i < 1; ++i)
+		for (spring& s: _springs)
+		{
+			vertex_type& p1 = _vertices[s.p1];
+			vertex_type& p2 = _vertices[s.p2];
+			Vector3f xij = p2.coord() - p1.coord();
+
+			if (xij.norm() > s.l0 * 1.1)
+			{
+				Vector3f compensation = (xij.norm() - s.l0 * 1.1) * xij.normalized();
+				if (p1._degree == 3 && p2._degree == 3)
+				{
+					//printf("Oops! %u, %u, %f, %f\n", s.p1, s.p2, s.l0, xij.norm());
+					p1._coord += 0.5 * compensation;
+					p2._coord -= 0.5 * compensation;
+					//printf("AOops! %u, %u, %f, %f\n", s.p1, s.p2, s.l0, (p2.coord() - p1.coord()).norm());
+				} else if (p1._degree == 3) {
+					//printf("2Oops! %u, %u, %f, %f\n", s.p1, s.p2, s.l0, xij.norm());
+					p1._coord += compensation;
+					//printf("2AOops! %u, %u, %f, %f\n", s.p1, s.p2, s.l0, (p2.coord() - p1.coord()).norm());
+				}
+				else if (p2._degree == 3) {
+					//printf("3Oops! %u, %u, %f, %f\n", s.p1, s.p2, s.l0, xij.norm());
+					p2._coord -= compensation;
+					//printf("3AOops! %u, %u, %f, %f\n", s.p1, s.p2, s.l0, (p2.coord() - p1.coord()).norm());
+				}
+			}
+		}
+}
+
 
 Eigen::VectorXf
 DeformableModel::force_vector() const
@@ -406,6 +447,48 @@ DeformableModel::jacobian_dfdv() const
 	}
 
 	return result;
+}
+
+RigidModel::RigidModel(const char* objFile)
+{
+	tinyobj::attrib_t attrib;
+	std::vector<tinyobj::shape_t> shapes;
+	std::vector<tinyobj::material_t> materials;
+
+	std::string warn;
+	std::string err;
+
+	bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, objFile);
+
+	if (!warn.empty()) {
+		std::cout << warn << std::endl;
+	}
+
+	if (!err.empty()) {
+		std::cerr << err << std::endl;
+	}
+
+	if (!ret) {
+		exit(1);
+	}
+
+
+	for (size_t i = 0; i < attrib.vertices.size(); i += 3)
+	{
+		_vertices.push_back(base_vertex(attrib.vertices[i], attrib.vertices[i + 1], attrib.vertices[i + 2]));
+	}
+
+	// Loop over shapes
+	for (tinyobj::shape_t& shape:shapes) {
+		for (size_t i = 0; i < shape.mesh.indices.size(); i += 3) {
+			_faces.emplace_back(shape.mesh.indices[i].vertex_index, 
+				shape.mesh.indices[i + 1].vertex_index, 
+				shape.mesh.indices[i + 2].vertex_index);
+		}
+
+	}
+
+	init_tetrahedra();
 }
 
 template <typename VertexIter, typename FaceIter>
@@ -586,10 +669,54 @@ Quad::Quad()
 	_tetrahedrons.push_back({ 0, 1, 2, 3 });
 }
 
-RectangleDeformalbleModel::RectangleDeformalbleModel(unsigned int width, unsigned int height,
+
+Sphere::Sphere()
+{
+	const unsigned int countWarp = 24;
+	const unsigned int countWeft = 12;
+
+	_vertices.emplace_back(0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+	_vertices.emplace_back(0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f);
+	_points.emplace_back(0.0f, 1.0f, 0.0f);
+	_points.emplace_back(0.0f, -1.0f, 0.0f);
+	
+	float pi = atan(1) * 4;
+	for (int i = 0; i < countWeft - 1; i++)
+		for (int j = 0; j < countWarp; j++) {
+			float theta = (pi / countWeft) * (i + 1);
+			float gama = (2 * pi / countWarp) * j;
+			_vertices.emplace_back(sin(theta) * cos(gama), cos(theta), sin(theta) * sin(gama),
+				sin(theta) * cos(gama), cos(theta), sin(theta) * sin(gama));
+			_points.emplace_back(sin(theta) * cos(gama), cos(theta), sin(theta) * sin(gama));
+		}
+
+	_points.emplace_back(0.0, 0.0, 0.0);
+	unsigned centerIndex = _vertices.size();
+
+	for (int i = 0; i < countWeft - 2; i++)
+		for (int j = 0; j < countWarp; j++) {
+			unsigned int p1 = (i * countWarp) + (j + 0) % countWarp + 2;
+			unsigned int p2 = (i * countWarp) + (j + 1) % countWarp + 2;
+			unsigned int p3 = (i * countWarp + countWarp) + (j + 0) % countWarp + 2;
+			unsigned int p4 = (i * countWarp + countWarp) + (j + 1) % countWarp + 2;
+			_faces.emplace_back(p1, p2, p3);
+			_faces.emplace_back(p4, p3, p2);
+			_tetrahedrons.push_back({ p1, p2, p3, centerIndex });
+			_tetrahedrons.push_back({ p4, p3, p2, centerIndex });
+		}
+	for (int i = 0; i < countWarp; i++) {
+		_faces.emplace_back(0, (i + 0) % countWarp + 2, (i + 1) % countWarp + 2);
+		_faces.emplace_back(1, (countWeft - 2) * countWarp + (i + 0) % countWarp + 2, (countWeft - 2) * countWarp + (i + 1) % countWarp + 2);
+		_tetrahedrons.push_back({ 0, (i + 0) % countWarp + 2, (i + 1) % countWarp + 2, centerIndex });
+		_tetrahedrons.push_back({ 1, (countWeft - 2) * countWarp + (i + 0) % countWarp + 2, 
+			(countWeft - 2) * countWarp + (i + 1) % countWarp + 2, centerIndex });
+	}
+}
+
+RectangleDeformableModel::RectangleDeformableModel(unsigned int width, unsigned int height,
 																float pMass , float ksStruct , float kdStruct ,
 																float ksShear , float kdShear , float ksBend , float kdBend) :
-	DeformableModel(pMass, ksStruct, kdStruct, ksShear, kdShear, ksBend, kdBend), _width(width), _height(height)
+	DeformableModel(width * height, pMass, ksStruct, kdStruct, ksShear, kdShear, ksBend, kdBend), _width(width), _height(height)
 {
 	const float midWidth = _width * Length / 2;
 	const float midHeight = _height * Length / 2;
@@ -605,23 +732,48 @@ RectangleDeformalbleModel::RectangleDeformalbleModel(unsigned int width, unsigne
 			if (i != 0 && j != 0)
 				_faces.emplace_back(index(i - 1, j), index(i, j), index(i, j - 1), 0.0f, 1.0f, 0.0f);
 
+			
 			// Add springs
-			if (j != _width - 1)
-				_springs.emplace_back(index(i, j), index(i, j + 1), _ks_struct, _kd_struct, Length);
-			if (i != _height - 1)
-				_springs.emplace_back(index(i, j), index(i + 1, j), _ks_struct, _kd_struct, Length);
-			if (i != _height - 1 && j != _width - 1)
-				_springs.emplace_back(index(i, j), index(i + 1, j + 1), _ks_shear, _kd_shear, DiagonalCoeff * Length);
-			if (i != 0 && j != _width - 1)
-				_springs.emplace_back(index(i, j), index(i - 1, j + 1), _ks_shear, _kd_shear, DiagonalCoeff * Length);
-			if (j < _width - 2)
-				_springs.emplace_back(index(i, j), index(i, j + 2), _ks_bend, _kd_bend, 2 * Length);
-			if (i < _height - 2)
-				_springs.emplace_back(index(i, j), index(i + 2, j), _ks_bend, _kd_bend, 2 * Length);
+			if (j != _width - 1) {
+				add_spring(index(i, j), index(i, j + 1), _ks_struct, _kd_struct, Length);
+			}
+			if (i != _height - 1) {
+				add_spring(index(i, j), index(i + 1, j), _ks_struct, _kd_struct, Length);
+			}
+			if (i != _height - 1 && j != _width - 1) {
+				add_spring(index(i, j), index(i + 1, j + 1), _ks_shear, _kd_shear, DiagonalCoeff * Length);
+			}
+			if (i != 0 && j != _width - 1) {
+				add_spring(index(i, j), index(i - 1, j + 1), _ks_shear, _kd_shear, DiagonalCoeff * Length);
+			}
+			if (j < _width - 2) {
+				add_spring(index(i, j), index(i, j + 2), _ks_bend, _kd_bend, 2 * Length);
+			}
+			if (i < _height - 2) {
+				add_spring(index(i, j), index(i + 2, j), _ks_bend, _kd_bend, 2 * Length);
+			}
 		}
 
 	_vertices.shrink_to_fit();
 	_faces.shrink_to_fit();
 	_springs.shrink_to_fit();
 }
+
+inline
+void RectangleDeformableModel::add_spring(unsigned v1, unsigned v2, float ks, float kd, float l0)
+{
+	Matrix3f I = Matrix3f::Identity();
+	Matrix3f ks_sub = ks * I;
+	Matrix3f kd_sub = kd * I;
+	
+	_springs.emplace_back(v1, v2, ks, kd, l0);
+	_dfdx_precomputed.sub_matrix(v1, v2) = ks_sub;
+	_dfdv_precomputed.sub_matrix(v1, v2) = kd_sub;
+	_dfdx_precomputed.sub_matrix(v2, v1) = ks_sub;
+	_dfdv_precomputed.sub_matrix(v2, v1) = kd_sub;
+
+	_dfdx_precomputed.sub_matrix(v1, v1) -= ks_sub + kd_sub;
+	_dfdx_precomputed.sub_matrix(v2, v2) -= ks_sub + kd_sub;
+}
+
 };

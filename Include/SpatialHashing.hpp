@@ -3,8 +3,8 @@
 
 #include <Eigen/Dense>
 
-#include <deque>
 #include <vector>
+#include <initializer_list>
 
 namespace Simulator {
 struct HashTableEntry {
@@ -16,12 +16,14 @@ struct HashTableEntry {
 	Type type;
 	unsigned int object;
 	unsigned int element;
+	HashTableEntry(const Eigen::Vector3i &c, Type t, unsigned int o, unsigned int e):
+		cell(c), type(t), object(o), element(e) {}
 };
 
 class SpatialHashing {
 private:
 	typedef HashTableEntry value_type;
-	typedef std::deque<value_type> buckle_type;
+	typedef std::vector<value_type> buckle_type;
 	typedef buckle_type::const_iterator entry_handle;
 
 	unsigned int _buckle_size;
@@ -34,9 +36,10 @@ private:
 
 public:
 	SpatialHashing(unsigned int buckle_size) :
-		_buckles(buckle_size), _buckle_size(buckle_size)/*, _end_iters(buckle_size)*/ {
+		_buckles(buckle_size), _buckle_size(buckle_size) {
 		_buckles.shrink_to_fit();
-		//_end_iters.shrink_to_fit();
+		for (buckle_type& buckle : _buckles)
+			buckle.reserve(50);
 	}
 
 	void pre_next_step() {
@@ -55,12 +58,12 @@ public:
 
 	void insert(const Eigen::Vector3i& cell, HashTableEntry::Type type, unsigned int object, unsigned int element) {
 		unsigned int key = hash(cell.x(), cell.y(), cell.z());
-		_buckles[key].push_front(HashTableEntry{ cell, type, object, element });
+		_buckles[key].emplace_back(cell, type, object, element);
 	}
 
 	void insert(int i, int j, int k, HashTableEntry::Type type, unsigned int object, unsigned int element) {
 		unsigned int key = hash(i, j, k);
-		_buckles[key].push_front(HashTableEntry{ Eigen::Vector3i(i, j, k), type, object, element });
+		_buckles[key].emplace_back( Eigen::Vector3i(i, j, k), type, object, element );
 	}
 
 	void insert_range(int minx, int maxx, int miny, int maxy, int minz, int maxz, HashTableEntry::Type type, unsigned int object, unsigned int element) {
@@ -68,7 +71,7 @@ public:
 			for (int j = miny; j <= maxy; j++)
 				for (int k = minz; k <= maxz; k++) {
 					unsigned int key = hash(i, j, k);
-					_buckles[key].push_front(HashTableEntry{ Eigen::Vector3i(i, j, k), type, object, element });
+					_buckles[key].emplace_back(Eigen::Vector3i(i, j, k), type, object, element);
 				}
 	}
 
@@ -76,7 +79,7 @@ public:
 	void insert(InputIt first, InputIt last) {
 		for (; first != last; first++) {
 			unsigned int key = hash(first->cell.x(), first->cell.y(), first->cell.z());
-			_buckles[key].push_front(*first);
+			_buckles[key].push_back(*first);
 		}
 	}
 
